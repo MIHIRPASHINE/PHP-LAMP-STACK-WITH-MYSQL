@@ -1,0 +1,282 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: A sample template to create infrastructure for practicing PHP-MYSQL Project.
+Resources:                       
+  RDSVPC:                     #Once this infra is provisioned on aws, ssh to app-servers and edit the db.phb in source code.
+    Type: AWS::EC2::VPC       #in db.php edit server-name as rds-endpoint, add username and psswrd of rds database
+    Properties:               #re-start httpd       #sudo systemctl reststart httpd
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+       - Key: Name
+         Value: RDS-VPC
+
+  RDSInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: RDS-IGW
+
+  RDSAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+         Ref: RDSVPC
+      InternetGatewayId:
+         Ref: RDSInternetGateway 
+
+  RDSPUBSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: RDSVPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: "us-east-1a"
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: RDS-PUB-SUBNET
+
+  RDSSECONDPUBSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: RDSVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: "us-east-1b"
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: RDS-PUB2-SUBNET       
+
+  RDSPVTSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: RDSVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: "us-east-1c"
+      Tags:
+      - Key: Name
+        Value: RDS-PVT-SUBNET        
+
+  RDSPUBRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: RDSVPC
+      Tags:
+      - Key: Name
+        Value: RDS-PUB-RT
+
+  RDSSECONDPUBRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: RDSVPC
+      Tags:
+      - Key: Name
+        Value: RDS-SECONDPUB-RT      
+
+  RDSPVTRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: RDSVPC
+      Tags:
+      - Key: Name
+        Value: RDS-PVT-RT      
+
+  RDSPUBSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: RDSPUBSubnet
+      RouteTableId:
+        Ref: RDSPUBRouteTable
+
+  RDSSECONDPUBSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: RDSSECONDPUBSubnet
+      RouteTableId:
+        Ref: RDSSECONDPUBRouteTable      
+
+  RDSPVTSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: RDSPVTSubnet
+      RouteTableId:
+        Ref: RDSPVTRouteTable      
+  
+  RDSRoute:
+    Type: AWS::EC2::Route
+    DependsOn: RDSAttachGateway
+    Properties:
+       RouteTableId:
+         Ref: RDSPUBRouteTable
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId:
+         Ref: RDSInternetGateway
+
+  RDSSECONDRoute:
+    Type: AWS::EC2::Route
+    DependsOn: RDSAttachGateway
+    Properties:
+       RouteTableId:
+         Ref: RDSSECONDPUBRouteTable
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId:
+         Ref: RDSInternetGateway       
+
+  RDSNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref RDSPUBSubnet
+      Tags:
+      - Key: Name
+        Value: Rds-Natgateway
+  NATGatewayEIP:
+     Type: AWS::EC2::EIP
+     Properties:
+        Domain: RDSVPC
+  RouteNATGateway:
+     DependsOn: RDSNATGateway
+     Type: AWS::EC2::Route
+     Properties:
+        RouteTableId: !Ref RDSPVTRouteTable
+        DestinationCidrBlock: '0.0.0.0/0'
+        NatGatewayId: !Ref RDSNATGateway       
+
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound SSH connection requests to server, allow outbound all.
+      VpcId: !Ref RDSVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0 
+      Tags: 
+      - Key: Name
+        Value: SSH-SEC-GRP  
+
+  MYSQLSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow MYSQL traffic to server
+        VpcId: !Ref RDSVPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 3306
+            ToPort: 3306
+            CidrIp: 0.0.0.0/0
+        SecurityGroupEgress:
+          - IpProtocol: tcp
+            FromPort: 3306
+            ToPort: 3306
+            CidrIp: 0.0.0.0/0   
+        Tags: 
+        - Key: Name
+          Value: MY-SQL-SECGRP  
+
+  HTTPSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow HTTP traffic to server
+        VpcId: !Ref RDSVPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 0.0.0.0/0
+        SecurityGroupEgress:
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 0.0.0.0/0   
+        Tags: 
+        - Key: Name
+          Value: HTTPD-SECGRP                                       
+
+  RDSPUBInstance: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "ami-0f409bae3775dc8e5"
+      KeyName: "nvirgkeypair"
+      SubnetId: !Ref RDSPUBSubnet
+      SecurityGroupIds: 
+         - !Ref SSHSecurityGroup
+         - !Ref HTTPSecurityGroup
+      AvailabilityZone: us-east-1a
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum -y install git
+          sudo yum -y install httpd
+          sudo systemctl start httpd
+          sudo systemctl enable httpd                 #Re-start once on the console
+          sudo yum install php php-mysql -y  #install php as a runtime for php app code and php-mysql as a client (help to communicate php app with mysql)
+          sudo git clone https://github.com/Akiranred/php-lamp.git /var/www/html
+          sudo chown -R apche:apache /var/www/html
+      InstanceType: t2.micro
+      Tags: 
+      - Key: Name
+        Value: APP-SERVER-1
+
+  SECONDPUBInstance: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "ami-0f409bae3775dc8e5"
+      KeyName: "nvirgkeypair"
+      SubnetId: !Ref RDSSECONDPUBSubnet
+      SecurityGroupIds: 
+         - !Ref SSHSecurityGroup
+         - !Ref HTTPSecurityGroup
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum -y install git
+          sudo yum -y install httpd
+          sudo systemctl start httpd
+          sudo systemctl enable httpd
+          sudo yum install php php-mysql -y       #Re-start once on the console
+          sudo git clone https://github.com/Akiranred/php-lamp.git /var/www/html
+          sudo chown -R apche:apache /var/www/html 
+      AvailabilityZone: us-east-1b
+      InstanceType: t2.micro
+      Tags: 
+      - Key: Name
+        Value: APP-SERVER-2      
+
+  IBMPVTInstance: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "ami-0f409bae3775dc8e5"
+      KeyName: "nvirgkeypair"
+      SubnetId: !Ref RDSPVTSubnet
+      SecurityGroupIds: 
+         - !Ref SSHSecurityGroup
+         - !Ref MYSQLSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum -y install updates
+          sudo yum -y install mysql   
+      AvailabilityZone: us-east-1c
+      InstanceType: t2.micro
+      Tags: 
+      - Key: Name
+        Value: DATABASE-SERVER    
+
+                
