@@ -1,4 +1,1 @@
-# LAMP Demo
-
-To Execute this application we would be using LAMP stack.
-Deploy the application code in apache server
+Integrated AWS RDS MySQL DB with PHP-LAMP Stack bookstore application and deployed it on Apache EC2 WebServers in multiple availability zones.
